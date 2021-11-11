@@ -419,11 +419,10 @@ func (c *Context) planWalk(config *configs.Config, prevRunState *states.State, r
 	// we can now walk.
 	changes := plans.NewChanges()
 	walker, walkDiags := c.walk(graph, walkOp, &graphWalkOpts{
-		Config:             config,
-		InputState:         prevRunState,
-		Changes:            changes,
-		MoveResults:        moveResults,
-		RootVariableValues: rootVariables,
+		Config:      config,
+		InputState:  prevRunState,
+		Changes:     changes,
+		MoveResults: moveResults,
 	})
 	diags = diags.Append(walker.NonFatalDiagnostics)
 	diags = diags.Append(walkDiags)
@@ -469,34 +468,37 @@ func (c *Context) planGraph(config *configs.Config, prevRunState *states.State, 
 	switch mode := opts.Mode; mode {
 	case plans.NormalMode:
 		graph, diags := (&PlanGraphBuilder{
-			Config:       config,
-			State:        prevRunState,
-			Plugins:      c.plugins,
-			Targets:      opts.Targets,
-			ForceReplace: opts.ForceReplace,
-			Validate:     validate,
-			skipRefresh:  opts.SkipRefresh,
+			Config:             config,
+			State:              prevRunState,
+			RootVariableValues: opts.SetVariables,
+			Plugins:            c.plugins,
+			Targets:            opts.Targets,
+			ForceReplace:       opts.ForceReplace,
+			Validate:           validate,
+			skipRefresh:        opts.SkipRefresh,
 		}).Build(addrs.RootModuleInstance)
 		return graph, walkPlan, diags
 	case plans.RefreshOnlyMode:
 		graph, diags := (&PlanGraphBuilder{
-			Config:          config,
-			State:           prevRunState,
-			Plugins:         c.plugins,
-			Targets:         opts.Targets,
-			Validate:        validate,
-			skipRefresh:     opts.SkipRefresh,
-			skipPlanChanges: true, // this activates "refresh only" mode.
+			Config:             config,
+			State:              prevRunState,
+			RootVariableValues: opts.SetVariables,
+			Plugins:            c.plugins,
+			Targets:            opts.Targets,
+			Validate:           validate,
+			skipRefresh:        opts.SkipRefresh,
+			skipPlanChanges:    true, // this activates "refresh only" mode.
 		}).Build(addrs.RootModuleInstance)
 		return graph, walkPlan, diags
 	case plans.DestroyMode:
 		graph, diags := (&DestroyPlanGraphBuilder{
-			Config:      config,
-			State:       prevRunState,
-			Plugins:     c.plugins,
-			Targets:     opts.Targets,
-			Validate:    validate,
-			skipRefresh: opts.SkipRefresh,
+			Config:             config,
+			State:              prevRunState,
+			RootVariableValues: opts.SetVariables,
+			Plugins:            c.plugins,
+			Targets:            opts.Targets,
+			Validate:           validate,
+			skipRefresh:        opts.SkipRefresh,
 		}).Build(addrs.RootModuleInstance)
 		return graph, walkPlanDestroy, diags
 	default:

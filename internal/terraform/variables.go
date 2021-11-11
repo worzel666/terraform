@@ -2,11 +2,13 @@ package terraform
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
 
+	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
@@ -321,4 +323,100 @@ func checkInputVariables(vcs map[string]*configs.Variable, vs InputValues) tfdia
 	}
 
 	return diags
+}
+
+func prepareFinalInputVariableValue(addr addrs.AbsInputVariableInstance, given cty.Value, valRange tfdiags.SourceRange, cfg *configs.Variable) (cty.Value, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+
+	convertTy := cfg.ConstraintType
+	log.Printf("[TRACE] prepareFinalInputVariableValue: preparing %s", addr)
+
+	var defaultVal cty.Value
+	if cfg.Default != cty.NilVal {
+		log.Printf("[TRACE] prepareFinalInputVariableValue: %s has a default value", addr)
+		var err error
+		defaultVal, err = convert.Convert(cfg.Default, convertTy)
+		if err != nil {
+			// Validation of the declaration should typically catch this,
+			// but we'll check it here too to be robust.
+			diags = diags.Append(&hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Invalid default value for module argument",
+				Detail: fmt.Sprintf(
+					"The default value for variable %q is incompatible with its type constraint: %s.",
+					cfg.Name, err,
+				),
+				Subject: &cfg.DeclRange,
+			})
+			// We'll return a placeholder unknown value to avoid producing
+			// redundant downstream errors.
+			return cty.UnknownVal(cfg.Type), diags
+		}
+	}
+
+	if given == cty.NilVal { // The variable wasn't set at all (even to null)
+		log.Printf("[TRACE] prepareFinalInputVariableValue: %s has no defined value", addr)
+		if cfg.Required() {
+			// NOTE: The CLI layer typically checks for itself whether all of
+			// the required _root_ module variables are not set, which would
+			// mask this error. We can get here for child module variables,
+			// though.
+			diags = diags.Append(&hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  `Required variable not set`,
+				Detail:   fmt.Sprintf(`The variable %q is required, but is not set.`, addr.Variable.Name),
+				Subject:  valRange.ToHCL().Ptr(),
+			})
+			// We'll return a placeholder unknown value to avoid producing
+			// redundant downstream errors.
+			return cty.UnknownVal(cfg.Type), diags
+		}
+
+		given = defaultVal // must be set, because we checked above that the variable isn't required
+	}
+
+	val, err := convert.Convert(given, convertTy)
+	if err != nil {
+		diags = diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid value for module argument",
+			Detail: fmt.Sprintf(
+				"The given value is not suitable for child module variable %q defined at %s: %s.",
+				cfg.Name, cfg.DeclRange.String(), err,
+			),
+			Subject: valRange.ToHCL().Ptr(),
+		})
+		// We'll return a placeholder unknown value to avoid producing
+		// redundant downstream errors.
+		return cty.UnknownVal(cfg.Type), diags
+	}
+
+	// By the time we get here, we know:
+	// - val matches the variable's type constraint
+	// - val is definitely not cty.NilVal, but might be a null value if the given was already null.
+	//
+	// That means we just need to handle the case where the value is null,
+	// which might mean we need to use the default value, or produce an error.
+	//
+	// For historical reasons we do this only for a "non-nullable" variable.
+	// Nullable variables just appear as null if they were set to null,
+	// regardless of any default value.
+	if val.IsNull() && !cfg.Nullable {
+		log.Printf("[TRACE] prepareFinalInputVariableValue: %s is defined as null", addr)
+		if defaultVal != cty.NilVal {
+			val = defaultVal
+		} else {
+			diags = diags.Append(&hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  `Required variable not set`,
+				Detail:   fmt.Sprintf(`The variable %q is required, but the given value is null.`, addr.Variable.Name),
+				Subject:  valRange.ToHCL().Ptr(),
+			})
+			// Stub out our return value so that the semantic checker doesn't
+			// produce redundant downstream errors.
+			val = cty.UnknownVal(cfg.Type)
+		}
+	}
+
+	return val, diags
 }

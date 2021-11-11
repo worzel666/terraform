@@ -111,9 +111,14 @@ type MockEvalContext struct {
 	PathCalled bool
 	PathPath   addrs.ModuleInstance
 
-	SetModuleCallArgumentsCalled bool
-	SetModuleCallArgumentsModule addrs.ModuleCallInstance
-	SetModuleCallArgumentsValues map[string]cty.Value
+	SetRootModuleArgumentCalled bool
+	SetRootModuleArgumentAddr   addrs.InputVariable
+	SetRootModuleArgumentValue  cty.Value
+
+	SetModuleCallArgumentCalled     bool
+	SetModuleCallArgumentModuleCall addrs.ModuleCallInstance
+	SetModuleCallArgumentVariable   addrs.InputVariable
+	SetModuleCallArgumentValue      cty.Value
 
 	GetVariableValueCalled bool
 	GetVariableValueAddr   addrs.AbsInputVariableInstance
@@ -321,10 +326,17 @@ func (c *MockEvalContext) Path() addrs.ModuleInstance {
 	return c.PathPath
 }
 
-func (c *MockEvalContext) SetModuleCallArguments(n addrs.ModuleCallInstance, values map[string]cty.Value) {
-	c.SetModuleCallArgumentsCalled = true
-	c.SetModuleCallArgumentsModule = n
-	c.SetModuleCallArgumentsValues = values
+func (c *MockEvalContext) SetRootModuleArgument(addr addrs.InputVariable, v cty.Value) {
+	c.SetRootModuleArgumentCalled = true
+	c.SetRootModuleArgumentAddr = addr
+	c.SetRootModuleArgumentValue = v
+}
+
+func (c *MockEvalContext) SetModuleCallArgument(callAddr addrs.ModuleCallInstance, varAddr addrs.InputVariable, v cty.Value) {
+	c.SetModuleCallArgumentCalled = true
+	c.SetModuleCallArgumentModuleCall = callAddr
+	c.SetModuleCallArgumentVariable = varAddr
+	c.SetModuleCallArgumentValue = v
 }
 
 func (c *MockEvalContext) GetVariableValue(addr addrs.AbsInputVariableInstance) cty.Value {
