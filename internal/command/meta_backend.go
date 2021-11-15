@@ -97,14 +97,6 @@ func (m *Meta) Backend(opts *BackendOpts) (backend.Enhanced, tfdiags.Diagnostics
 		b, backendDiags = m.backendFromConfig(opts)
 		diags = diags.Append(backendDiags)
 
-		if opts.Init && b != nil && !diags.HasErrors() {
-			// Its possible that the currently selected workspace doesn't exist, so
-			// we call selectWorkspace to ensure an existing workspace is selected.
-			if err := m.selectWorkspace(b); err != nil {
-				diags = diags.Append(err)
-			}
-		}
-
 		if diags.HasErrors() {
 			return nil, diags
 		}
@@ -232,8 +224,11 @@ func (m *Meta) selectWorkspace(b backend.Backend) error {
 				Query:       "\n[reset][bold][yellow]No workspaces found.[reset]",
 				Description: fmt.Sprintf(inputCloudInitCreateWorkspace, strings.Join(c.WorkspaceMapping.Tags, ", ")),
 			})
+			if err != nil {
+				return fmt.Errorf("Couldn't create initial workspace: %w", err)
+			}
 			name = strings.TrimSpace(name)
-			if err != nil || name == "" {
+			if name == "" {
 				return fmt.Errorf("Couldn't create initial workspace: no name provided")
 			}
 			log.Printf("[TRACE] Meta.selectWorkspace: selecting the new TFC workspace requested by the user (%s)", name)
@@ -610,7 +605,7 @@ func (m *Meta) backendFromConfig(opts *BackendOpts) (backend.Backend, tfdiags.Di
 
 		return m.backend_c_r_S(c, cHash, sMgr, true)
 
-	// Configuring a backend for the first time.
+	// Configuring a backend for the first time or -reconfigure flag was used
 	case c != nil && s.Backend.Empty():
 		log.Printf("[TRACE] Meta.Backend: moving from default local state only to %q backend", c.Type)
 		if !opts.Init {
@@ -631,9 +626,19 @@ func (m *Meta) backendFromConfig(opts *BackendOpts) (backend.Backend, tfdiags.Di
 			}
 			return nil, diags
 		}
-
-		return m.backend_C_r_s(c, cHash, sMgr)
-
+		// get the backend
+		b, configVal, diags := m.backendInitFromConfig(c)
+		if diags.HasErrors() {
+			return nil, diags
+		}
+		// Verify that selected workspace exist. Otherwise prompt user to create one
+		if opts.Init && b != nil {
+			if err := m.selectWorkspace(b); err != nil {
+				diags = diags.Append(err)
+				return b, diags
+			}
+		}
+		return m.backend_C_r_s(b, configVal, c, sMgr)
 	// Potentially changing a backend configuration
 	case c != nil && !s.Backend.Empty():
 		// We are not going to migrate if...
@@ -867,14 +872,9 @@ func (m *Meta) backend_c_r_S(c *configs.Backend, cHash int, sMgr *clistate.Local
 }
 
 // Configuring a backend for the first time.
-func (m *Meta) backend_C_r_s(c *configs.Backend, cHash int, sMgr *clistate.LocalState) (backend.Backend, tfdiags.Diagnostics) {
-	// Get the backend
-	b, configVal, diags := m.backendInitFromConfig(c)
-	if diags.HasErrors() {
-		return nil, diags
-	}
-
-	// Grab a purely local backend to get the local state if it exists
+func (m *Meta) backend_C_r_s(b backend.Backend, configVal cty.Value, c *configs.Backend, sMgr *clistate.LocalState) (backend.Backend, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+	// 	// Grab a purely local backend to get the local state if it exists
 	localB, localBDiags := m.Backend(&BackendOpts{ForceLocal: true, Init: true})
 	if localBDiags.HasErrors() {
 		diags = diags.Append(localBDiags)
@@ -972,6 +972,8 @@ func (m *Meta) backend_C_r_s(c *configs.Backend, cHash int, sMgr *clistate.Local
 	if s == nil {
 		s = legacy.NewState()
 	}
+	configSchema := b.ConfigSchema()
+	cHash := c.Hash(configSchema)
 	s.Backend = &legacy.BackendState{
 		Type:      c.Type,
 		ConfigRaw: json.RawMessage(configJSON),
