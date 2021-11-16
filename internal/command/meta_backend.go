@@ -597,7 +597,6 @@ func (m *Meta) backendFromConfig(opts *BackendOpts) (backend.Backend, tfdiags.Di
 			))
 			return nil, diags
 		}
-
 		if !m.migrateState {
 			diags = diags.Append(migrateOrReconfigDiag)
 			return nil, diags
@@ -626,19 +625,7 @@ func (m *Meta) backendFromConfig(opts *BackendOpts) (backend.Backend, tfdiags.Di
 			}
 			return nil, diags
 		}
-		// get the backend
-		b, configVal, diags := m.backendInitFromConfig(c)
-		if diags.HasErrors() {
-			return nil, diags
-		}
-		// Verify that selected workspace exist. Otherwise prompt user to create one
-		if opts.Init && b != nil {
-			if err := m.selectWorkspace(b); err != nil {
-				diags = diags.Append(err)
-				return b, diags
-			}
-		}
-		return m.backend_C_r_s(b, configVal, c, sMgr)
+		return m.backend_C_r_s(c, cHash, sMgr, opts)
 	// Potentially changing a backend configuration
 	case c != nil && !s.Backend.Empty():
 		// We are not going to migrate if...
@@ -648,7 +635,15 @@ func (m *Meta) backendFromConfig(opts *BackendOpts) (backend.Backend, tfdiags.Di
 		// AND we're not providing any overrides. An override can mean a change overriding an unchanged backend block (indicated by the hash value).
 		if (uint64(cHash) == s.Backend.Hash) && (!opts.Init || opts.ConfigOverride == nil) {
 			log.Printf("[TRACE] Meta.Backend: using already-initialized, unchanged %q backend configuration", c.Type)
-			return m.savedBackend(sMgr)
+			savedBackend, diags := m.savedBackend(sMgr)
+			// Verify that selected workspace exist. Otherwise prompt user to create one
+			if opts.Init && savedBackend != nil {
+				if err := m.selectWorkspace(savedBackend); err != nil {
+					diags = diags.Append(err)
+					return nil, diags
+				}
+			}
+			return savedBackend, diags
 		}
 
 		// If our configuration (the result of both the literal configuration and given
@@ -669,6 +664,13 @@ func (m *Meta) backendFromConfig(opts *BackendOpts) (backend.Backend, tfdiags.Di
 			moreDiags = m.updateSavedBackendHash(cHash, sMgr)
 			if moreDiags.HasErrors() {
 				return nil, diags
+			}
+			// Verify that selected workspace exist. Otherwise prompt user to create one
+			if opts.Init && savedBackend != nil {
+				if err := m.selectWorkspace(savedBackend); err != nil {
+					diags = diags.Append(err)
+					return nil, diags
+				}
 			}
 
 			return savedBackend, diags
@@ -701,7 +703,6 @@ func (m *Meta) backendFromConfig(opts *BackendOpts) (backend.Backend, tfdiags.Di
 			}
 			return nil, diags
 		}
-
 		if !m.migrateState {
 			if c.Type == "cloud" {
 				diags = diags.Append(migrateOrReconfigDiagCloud)
@@ -712,7 +713,7 @@ func (m *Meta) backendFromConfig(opts *BackendOpts) (backend.Backend, tfdiags.Di
 		}
 
 		log.Printf("[WARN] backend config has changed since last init")
-		return m.backend_C_r_S_changed(c, cHash, sMgr, true)
+		return m.backend_C_r_S_changed(c, cHash, sMgr, true, opts)
 
 	default:
 		diags = diags.Append(fmt.Errorf(
@@ -872,9 +873,14 @@ func (m *Meta) backend_c_r_S(c *configs.Backend, cHash int, sMgr *clistate.Local
 }
 
 // Configuring a backend for the first time.
-func (m *Meta) backend_C_r_s(b backend.Backend, configVal cty.Value, c *configs.Backend, sMgr *clistate.LocalState) (backend.Backend, tfdiags.Diagnostics) {
-	var diags tfdiags.Diagnostics
-	// 	// Grab a purely local backend to get the local state if it exists
+func (m *Meta) backend_C_r_s(c *configs.Backend, cHash int, sMgr *clistate.LocalState, opts *BackendOpts) (backend.Backend, tfdiags.Diagnostics) {
+	// Get the backend
+	b, configVal, diags := m.backendInitFromConfig(c)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+
+	// Grab a purely local backend to get the local state if it exists
 	localB, localBDiags := m.Backend(&BackendOpts{ForceLocal: true, Init: true})
 	if localBDiags.HasErrors() {
 		diags = diags.Append(localBDiags)
@@ -972,12 +978,18 @@ func (m *Meta) backend_C_r_s(b backend.Backend, configVal cty.Value, c *configs.
 	if s == nil {
 		s = legacy.NewState()
 	}
-	configSchema := b.ConfigSchema()
-	cHash := c.Hash(configSchema)
 	s.Backend = &legacy.BackendState{
 		Type:      c.Type,
 		ConfigRaw: json.RawMessage(configJSON),
 		Hash:      uint64(cHash),
+	}
+
+	// Verify that selected workspace exist. Otherwise prompt user to create one
+	if opts.Init && b != nil {
+		if err := m.selectWorkspace(b); err != nil {
+			diags = diags.Append(err)
+			return nil, diags
+		}
 	}
 
 	if err := sMgr.WriteState(s); err != nil {
@@ -1000,7 +1012,7 @@ func (m *Meta) backend_C_r_s(b backend.Backend, configVal cty.Value, c *configs.
 }
 
 // Changing a previously saved backend.
-func (m *Meta) backend_C_r_S_changed(c *configs.Backend, cHash int, sMgr *clistate.LocalState, output bool) (backend.Backend, tfdiags.Diagnostics) {
+func (m *Meta) backend_C_r_S_changed(c *configs.Backend, cHash int, sMgr *clistate.LocalState, output bool, opts *BackendOpts) (backend.Backend, tfdiags.Diagnostics) {
 	if output {
 		// Notify the user
 		m.Ui.Output(m.Colorize().Color(fmt.Sprintf(
@@ -1072,6 +1084,14 @@ func (m *Meta) backend_C_r_S_changed(c *configs.Backend, cHash int, sMgr *clista
 		Type:      c.Type,
 		ConfigRaw: json.RawMessage(configJSON),
 		Hash:      uint64(cHash),
+	}
+
+	// Verify that selected workspace exist. Otherwise prompt user to create one
+	if opts.Init && b != nil {
+		if err := m.selectWorkspace(b); err != nil {
+			diags = diags.Append(err)
+			return b, diags
+		}
 	}
 
 	if err := sMgr.WriteState(s); err != nil {
