@@ -100,14 +100,13 @@ func (c *PlanCommand) Run(rawArgs []string) int {
 		return 1
 	}
 
-	if op.Result != backend.OperationSuccess {
+	if op.Result == backend.OperationFailure {
 		return op.Result.ExitStatus()
 	}
-	if args.DetailedExitCode && !op.PlanEmpty {
-		return 2
+	if args.DetailedExitCode {
+		return op.Result.ExitStatus()
 	}
-
-	return op.Result.ExitStatus()
+	return 0
 }
 
 func (c *PlanCommand) PrepareBackend(args *arguments.State) (backend.Enhanced, tfdiags.Diagnostics) {

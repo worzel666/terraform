@@ -918,7 +918,7 @@ func TestPlan_detailedExitcode(t *testing.T) {
 		}
 	})
 
-	t.Run("return 2", func(t *testing.T) {
+	t.Run("return 8", func(t *testing.T) {
 		p := planFixtureProvider()
 		view, done := testView(t)
 		c := &PlanCommand{
@@ -930,7 +930,7 @@ func TestPlan_detailedExitcode(t *testing.T) {
 
 		code := c.Run([]string{"-detailed-exitcode"})
 		output := done(t)
-		if code != 2 {
+		if code != 8 {
 			t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
 		}
 	})

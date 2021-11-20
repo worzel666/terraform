@@ -102,7 +102,37 @@ func (b *Local) opPlan(
 	}
 
 	// Record whether this plan includes any side-effects that could be applied.
-	runningOp.PlanEmpty = !plan.CanApply()
+	for _, res := range plan.Changes.Resources {
+		if res.Action == plans.Update {
+			runningOp.Result += backend.OperationSuccessResourceChanges
+			break
+		}
+	}
+
+	for _, res := range plan.Changes.Resources {
+		if res.Action == plans.Delete || res.Action == plans.DeleteThenCreate || res.Action == plans.CreateThenDelete {
+			runningOp.Result += backend.OperationSuccessResourceDestruction
+			break
+		}
+	}
+
+	for _, res := range plan.Changes.Resources {
+		if res.Action == plans.Create || res.Action == plans.CreateThenDelete || res.Action == plans.DeleteThenCreate {
+			runningOp.Result += backend.OperationSuccessResourceAdditions
+			break
+		}
+	}
+
+	for _, output := range plan.Changes.Outputs {
+		if !output.Addr.Module.IsRoot() {
+			continue
+		}
+		if output.ChangeSrc.Action == plans.NoOp {
+			continue
+		}
+		runningOp.Result += backend.OperationSuccessOutputChanges
+		break
+	}
 
 	// Save the plan to disk
 	if path := op.PlanOutPath; path != "" {

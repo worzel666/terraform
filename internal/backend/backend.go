@@ -386,6 +386,18 @@ const (
 	// of error, and thus may have been only partially performed or not
 	// performed at all.
 	OperationFailure OperationResult = 1
+
+	// OperationSuccessOutputChanges indicates there are changes to outputs
+	OperationSuccessOutputChanges OperationResult = 2
+
+	// OperationSuccessResourceChanges indicates there are changes to resources
+	OperationSuccessResourceChanges OperationResult = 4
+
+	// OperationSuccessResourceAdditions indicates there are resource additions
+	OperationSuccessResourceAdditions OperationResult = 8
+
+	// OperationSuccessResourceDestruction indicates there is destruction
+	OperationSuccessResourceDestruction OperationResult = 16
 )
 
 func (r OperationResult) ExitStatus() int {
